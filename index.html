@@ -37,15 +37,15 @@
   .btnCompartirTodas{background:#DCEFE0;color:#2f6b3a;border-color:#bfe0c8 !important;font-weight:600;}
 
   .card{background:var(--blanco);border-radius:14px;padding:16px 18px;margin-bottom:12px;box-shadow:0 4px 14px rgba(0,0,0,0.06);}
-  .card.done{opacity:.55;}
+  .card.estado-atendida{opacity:.6;}
+  .card.estado-proceso{border-left:3px solid var(--ocaso);}
   .cardTop{display:flex;justify-content:space-between;gap:10px;}
   .who{font-weight:700;color:var(--noche);font-size:.92rem;}
   .when{font-size:.72rem;color:var(--piedra);}
   .msg{margin:8px 0 12px;font-size:.9rem;line-height:1.5;}
   .actions{display:flex;gap:8px;}
   .actions button{border:none;border-radius:8px;padding:8px 12px;font-size:.8rem;font-weight:600;cursor:pointer;}
-  .btnAtender{background:var(--exito);color:#fff;}
-  .btnAtender.undo{background:var(--arena-2);color:var(--texto);}
+  .estadoSelect{width:100%;padding:8px 10px;border-radius:8px;border:1px solid #ddd;font-size:.8rem;margin-bottom:10px;background:var(--blanco);}
   .btnBorrar{background:#F3D7D2;color:#8a2f22;}
   .btnCompartir{background:#DCEFE0;color:#2f6b3a;}
   .empty{text-align:center;color:var(--piedra);padding:40px 0;}
@@ -67,8 +67,15 @@
     <p>Calvary Culiacán Norte — panel privado</p>
   </header>
   <main>
-    <div class="toolbar">
-      <label><input type="checkbox" id="hideDone" onchange="render()"> Ocultar atendidas</label>
+    <div class="toolbar" style="flex-wrap:wrap;">
+      <input type="text" id="searchInput" placeholder="Buscar por nombre o texto..." oninput="render()" style="flex:1;min-width:160px;padding:8px 10px;border-radius:8px;border:1px solid #ddd;font-size:.82rem;">
+      <input type="date" id="dateFilter" onchange="render()" style="padding:7px 8px;border-radius:8px;border:1px solid #ddd;font-size:.8rem;">
+      <select id="statusFilter" onchange="render()" style="padding:8px 10px;border-radius:8px;border:1px solid #ddd;font-size:.8rem;">
+        <option value="todas">Todas</option>
+        <option value="pendiente">Pendientes</option>
+        <option value="proceso">En proceso</option>
+        <option value="atendida">Atendidas</option>
+      </select>
       <button class="btnCompartirTodas" id="btnCompartirTodas" onclick="compartirTodas()">Compartir todas</button>
       <button onclick="load()">↻ Actualizar</button>
     </div>
@@ -110,40 +117,78 @@ async function load(){
   }
 }
 
+// El campo "Atendida" ahora guarda uno de 3 valores: 'pendiente',
+// 'proceso' o 'atendida'. Esto mantiene compatibilidad con peticiones
+// viejas que todavía tengan el valor booleano true/false de antes.
+function estadoDe(r){
+  const v = r.Atendida;
+  if(v === true || v === 'atendida') return 'atendida';
+  if(v === 'proceso') return 'proceso';
+  return 'pendiente';
+}
+
+function filtrar(){
+  const texto = document.getElementById('searchInput').value.trim().toLowerCase();
+  const fechaFiltro = document.getElementById('dateFilter').value;
+  const estadoFiltro = document.getElementById('statusFilter').value;
+
+  return ROWS.filter(r => {
+    if(estadoFiltro !== 'todas' && estadoDe(r) !== estadoFiltro) return false;
+    if(texto){
+      const combinado = ((r.Nombre||'') + ' ' + (r.Peticion||'')).toLowerCase();
+      if(!combinado.includes(texto)) return false;
+    }
+    if(fechaFiltro){
+      const f = new Date(r.Fecha);
+      if(isNaN(f)) return false;
+      const fLocal = f.toISOString().slice(0,10);
+      if(fLocal !== fechaFiltro) return false;
+    }
+    return true;
+  });
+}
+
+const ESTADO_LABEL = {pendiente:'Pendiente', proceso:'En proceso', atendida:'Atendida'};
+
 function render(){
-  const hideDone = document.getElementById('hideDone').checked;
   const list = document.getElementById('list');
-  const items = hideDone ? ROWS.filter(r => !r.Atendida) : ROWS;
+  const items = filtrar();
   if(items.length === 0){
     list.innerHTML = '<div class="empty">No hay peticiones para mostrar.</div>';
   } else {
-    list.innerHTML = items.map(r => `
-      <div class="card ${r.Atendida ? 'done' : ''}">
+    list.innerHTML = items.map(r => {
+      const estado = estadoDe(r);
+      return `
+      <div class="card estado-${estado}">
         <div class="cardTop">
           <div class="who">${escapeHtml(r.Nombre || 'Anónimo')}</div>
           <div class="when">${formatDate(r.Fecha)}</div>
         </div>
         <div class="msg">${escapeHtml(r.Peticion || '')}</div>
+        <select class="estadoSelect" onchange="setEstado(${r.row}, this.value)">
+          <option value="pendiente" ${estado==='pendiente'?'selected':''}>Pendiente</option>
+          <option value="proceso" ${estado==='proceso'?'selected':''}>En proceso</option>
+          <option value="atendida" ${estado==='atendida'?'selected':''}>Atendida</option>
+        </select>
         <div class="actions">
-          <button class="btnAtender ${r.Atendida ? 'undo' : ''}" onclick="toggleAtendida(${r.row}, ${!r.Atendida})">
-            ${r.Atendida ? '↺ Marcar pendiente' : '✓ Marcar atendida'}
-          </button>
           <button class="btnBorrar" onclick="borrar(${r.row})">Eliminar</button>
           <button class="btnCompartir" onclick="compartir(${r.row})">Compartir</button>
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   }
   updateShareButtonLabel();
 }
 
-// Las que se compartirían en "Compartir todas" ahora mismo: respeta el
-// filtro de "ocultar atendidas" y además limita a los últimos 7 días,
-// para que el mensaje no se vuelva enorme si se acumulan muchas.
+// Las que se compartirían en "Compartir todas" ahora mismo: respeta los
+// filtros activos (búsqueda, fecha, estado) y además limita a los
+// últimos 7 días si no hay un filtro de fecha específico puesto.
 function sharePool(){
-  const hideDone = document.getElementById('hideDone').checked;
+  const fechaFiltro = document.getElementById('dateFilter').value;
+  const base = filtrar();
+  if(fechaFiltro) return base; // ya está acotado a un día exacto
   const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  return ROWS.filter(r => {
-    if(hideDone && r.Atendida) return false;
+  return base.filter(r => {
     const fecha = new Date(r.Fecha);
     return !isNaN(fecha) && fecha.getTime() >= sevenDaysAgo;
   });
@@ -156,8 +201,8 @@ function updateShareButtonLabel(){
   btn.textContent = `Compartir todas (${count})`;
 }
 
-async function toggleAtendida(row, atendida){
-  await post({action:'mark_atendida', row, atendida});
+async function setEstado(row, estado){
+  await post({action:'mark_atendida', row, estado});
   load();
 }
 function compartir(row){
